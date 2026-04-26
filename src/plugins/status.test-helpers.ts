@@ -15,6 +15,7 @@ export function createCompatibilityNotice(
     return {
       pluginId: params.pluginId,
       code: params.code,
+      compatCode: "legacy-before-agent-start",
       severity: "warn",
       message: LEGACY_BEFORE_AGENT_START_MESSAGE,
     };
@@ -23,6 +24,7 @@ export function createCompatibilityNotice(
   return {
     pluginId: params.pluginId,
     code: params.code,
+    compatCode: "hook-only-plugin-shape",
     severity: "info",
     message: HOOK_ONLY_MESSAGE,
   };
@@ -51,13 +53,21 @@ export function createPluginRecord(
     cliBackendIds: [],
     providerIds: [],
     speechProviderIds: [],
+    realtimeTranscriptionProviderIds: [],
+    realtimeVoiceProviderIds: [],
     mediaUnderstandingProviderIds: [],
     imageGenerationProviderIds: [],
+    videoGenerationProviderIds: [],
+    musicGenerationProviderIds: [],
     webFetchProviderIds: [],
     webSearchProviderIds: [],
+    contextEngineIds: [],
+    memoryEmbeddingProviderIds: [],
+    agentHarnessIds: [],
     gatewayMethods: [],
     cliCommands: [],
     services: [],
+    gatewayDiscoveryServiceIds: [],
     commands: [],
     httpRoutes: 0,
     hookCount: 0,
@@ -107,7 +117,7 @@ export function createCustomHook(params: {
 export function createPluginLoadResult(
   overrides: Partial<PluginLoadResult> & Pick<PluginLoadResult, "plugins"> = { plugins: [] },
 ): PluginLoadResult {
-  const { plugins, ...rest } = overrides;
+  const { plugins, realtimeTranscriptionProviders, realtimeVoiceProviders, ...rest } = overrides;
   return {
     plugins,
     diagnostics: [],
@@ -117,8 +127,15 @@ export function createPluginLoadResult(
     speechProviders: [],
     mediaUnderstandingProviders: [],
     imageGenerationProviders: [],
+    videoGenerationProviders: [],
+    musicGenerationProviders: [],
     webFetchProviders: [],
     webSearchProviders: [],
+    codexAppServerExtensionFactories: [],
+    agentToolResultMiddlewares: [],
+    memoryEmbeddingProviders: [],
+    textTransforms: [],
+    agentHarnesses: [],
     tools: [],
     hooks: [],
     typedHooks: [],
@@ -129,6 +146,9 @@ export function createPluginLoadResult(
     commands: [],
     conversationBindingResolvedHandlers: [],
     ...rest,
+    gatewayDiscoveryServices: rest.gatewayDiscoveryServices ?? [],
+    realtimeTranscriptionProviders: realtimeTranscriptionProviders ?? [],
+    realtimeVoiceProviders: realtimeVoiceProviders ?? [],
   };
 }
 

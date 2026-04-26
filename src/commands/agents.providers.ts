@@ -1,33 +1,44 @@
+import { isChannelVisibleInConfiguredLists } from "../channels/plugins/exposure.js";
 import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
-import {
-  getChannelPlugin,
-  listChannelPlugins,
-  normalizeChannelId,
-} from "../channels/plugins/index.js";
-import type { ChannelId } from "../channels/plugins/types.js";
-import type { OpenClawConfig } from "../config/config.js";
+import { getChannelPlugin, normalizeChannelId } from "../channels/plugins/index.js";
+import { listReadOnlyChannelPluginsForConfig } from "../channels/plugins/read-only.js";
+import type { ChannelPlugin } from "../channels/plugins/types.plugin.js";
+import type { ChannelId } from "../channels/plugins/types.public.js";
 import type { AgentBinding } from "../config/types.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DEFAULT_ACCOUNT_ID } from "../routing/session-key.js";
 
 type ProviderAccountStatus = {
   provider: ChannelId;
+  providerLabel?: string;
   accountId: string;
   name?: string;
   state: "linked" | "not linked" | "configured" | "not configured" | "enabled" | "disabled";
   enabled?: boolean;
   configured?: boolean;
+  visibleInConfiguredLists?: boolean;
 };
 
 function providerAccountKey(provider: ChannelId, accountId?: string) {
   return `${provider}:${accountId ?? DEFAULT_ACCOUNT_ID}`;
 }
 
+function isUnresolvedSecretRefResolutionError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    typeof error.message === "string" &&
+    /unresolved SecretRef/i.test(error.message)
+  );
+}
+
 function formatChannelAccountLabel(params: {
   provider: ChannelId;
+  providerLabel?: string;
   accountId: string;
   name?: string;
 }): string {
-  const label = getChannelPlugin(params.provider)?.meta.label ?? params.provider;
+  const label =
+    params.providerLabel ?? getChannelPlugin(params.provider)?.meta.label ?? params.provider;
   const account = params.name?.trim()
     ? `${params.accountId} (${params.name.trim()})`
     : params.accountId;
@@ -42,15 +53,45 @@ function formatProviderState(entry: ProviderAccountStatus): string {
   return parts.join(", ");
 }
 
+async function resolveReadOnlyAccount(params: {
+  plugin: ChannelPlugin;
+  cfg: OpenClawConfig;
+  accountId: string;
+}): Promise<unknown> {
+  if (params.plugin.config.inspectAccount) {
+    return await Promise.resolve(params.plugin.config.inspectAccount(params.cfg, params.accountId));
+  }
+  return params.plugin.config.resolveAccount(params.cfg, params.accountId);
+}
+
 export async function buildProviderStatusIndex(
   cfg: OpenClawConfig,
 ): Promise<Map<string, ProviderAccountStatus>> {
   const map = new Map<string, ProviderAccountStatus>();
 
-  for (const plugin of listChannelPlugins()) {
+  for (const plugin of listReadOnlyChannelPluginsForConfig(cfg, {
+    includeSetupRuntimeFallback: false,
+  })) {
     const accountIds = plugin.config.listAccountIds(cfg);
     for (const accountId of accountIds) {
-      const account = plugin.config.resolveAccount(cfg, accountId);
+      let account: unknown;
+      try {
+        account = await resolveReadOnlyAccount({ plugin, cfg, accountId });
+      } catch (error) {
+        if (!isUnresolvedSecretRefResolutionError(error)) {
+          throw error;
+        }
+        map.set(providerAccountKey(plugin.id, accountId), {
+          provider: plugin.id,
+          accountId,
+          state: "not configured",
+          configured: false,
+        });
+        continue;
+      }
+      if (!account) {
+        continue;
+      }
       const snapshot = plugin.config.describeAccount?.(account, cfg);
       const enabled = plugin.config.isEnabled
         ? plugin.config.isEnabled(account, cfg)
@@ -79,11 +120,13 @@ export async function buildProviderStatusIndex(
       const name = snapshot?.name ?? (account as { name?: string }).name;
       map.set(providerAccountKey(plugin.id, accountId), {
         provider: plugin.id,
+        providerLabel: plugin.meta.label,
         accountId,
         name,
         state,
         enabled,
         configured,
+        visibleInConfiguredLists: isChannelVisibleInConfiguredLists(plugin.meta),
       });
     }
   }
@@ -100,11 +143,18 @@ function resolveDefaultAccountId(cfg: OpenClawConfig, provider: ChannelId): stri
 }
 
 function shouldShowProviderEntry(entry: ProviderAccountStatus, cfg: OpenClawConfig): boolean {
+  if (entry.visibleInConfiguredLists !== undefined) {
+    if (!entry.visibleInConfiguredLists) {
+      const providerConfig = (cfg as Record<string, unknown>)[entry.provider];
+      return Boolean(entry.configured) || Boolean(providerConfig);
+    }
+    return Boolean(entry.configured);
+  }
   const plugin = getChannelPlugin(entry.provider);
   if (!plugin) {
     return Boolean(entry.configured);
   }
-  if (plugin.meta.showConfigured === false) {
+  if (!isChannelVisibleInConfiguredLists(plugin.meta)) {
     const providerConfig = (cfg as Record<string, unknown>)[plugin.id];
     return Boolean(entry.configured) || Boolean(providerConfig);
   }
@@ -114,6 +164,7 @@ function shouldShowProviderEntry(entry: ProviderAccountStatus, cfg: OpenClawConf
 function formatProviderEntry(entry: ProviderAccountStatus): string {
   const label = formatChannelAccountLabel({
     provider: entry.provider,
+    providerLabel: entry.providerLabel,
     accountId: entry.accountId,
     name: entry.name,
   });
